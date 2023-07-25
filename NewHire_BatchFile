@@ -1,0 +1,51 @@
+:: Testing batch for new hires
+
+@ECHO OFF
+
+::Running the program 
+Title NEW HIRE BATCH
+echo Report's Date: 
+date /t 
+ipconfig 
+getmac 
+
+:: Run DNS
+echo.  
+echo DNS Register Status 
+
+ipconfig /registerdns  
+echo.  
+IF %ERRORLEVEL%==0 (echo "DNS was successful")
+IF %ERRORLEVEL% NEQ 0 (echo "DNS failed")
+
+::Run Proxy in case it is needed
+netsh winhttp import proxy source=ie
+IF %ERRORLEVEL%==0 (echo "Proxy set successfully")
+IF %ERRORLEVEL% NEQ 0 (echo "Proxy failed")
+
+PAUSE
+
+:: Add Printers as well if needed
+echo.
+:input
+SET /P INPUT="Would you like to add printers now? (y/n) "
+
+IF [%INPUT%]==[] GOTO input
+IF %INPUT%==y (CALL batchfilelocation)
+IF %INPUT%==n (echo "OK. All done!") && GOTO exit
+
+PAUSE
+
+::Add 2nd printer, if needed. Two printers are the most used so far.
+echo.
+:new_input
+SET /P INPUT="Would you like to add another printer? (y/n) "
+IF [%INPUT%]==[] GOTO new_input
+IF %INPUT%==y CALL batchfilelocation
+IF %INPUT%==n echo "OK. All done!"
+
+PAUSE
+
+:exit
+
+PAUSE
