@@ -1,0 +1,450 @@
+#
+#
+# SCRIPT: ADMIN_RIGHTS_MANAGER
+# AUTHOR: LUIS BARBOSA
+# DATE: 06/07/2023
+# REV: 1.1.A
+#
+# PLATFORM: WINDOWS
+#
+# PURPOSE: This program will run to check if user ID from weekly reports from Word document are listed
+#		   in the Admin rights Excel report. If ID is not listed in report, the program will remove local admin rights for that 
+#		   particula ID. Program will also fill out a third report Excel document with the required information.
+# 
+# REV LIST:
+#		DATE: DATE_of_REVISION
+#		BY: AUTHOR_of_MODIFICATION
+#		MODIFICATION: Describe what was modified, new feautures, etc--
+#
+#
+# set -n  #Uncomment to check script syntax, without execution.
+#		  #NOTE: Do not forget to put the comment back in or
+# 		  #			the shell script will not execute!
+# set -x  #Uncomment to debug this shell script
+#
+###############################################################################################
+#		DEFINE FILES AND VARIABLES HERE                                                       #
+###############################################################################################
+
+#Welcome message
+$wMessage = "
+              _                      
+__      _____| | __  ___  _   _  ___ 
+\ \ /\ / / _ | |/ _||   || \_/ |/ _ |
+ \ V  V |  __| | |_ | | || |-| |  __|
+  \_/\_/ \___|_|\__||___||_| |_|\___|"
+
+#Introduction message  
+$iMessage = 
+"
+Code by LUIS BARBOSA
+"
+
+#Domain
+$domainName = "pfshq"
+#Computer
+$computerName
+#Admins in most PCs
+$regularAdmins = @("Administrator","Domain Admins","GD_PCServices")
+#Admin group
+$adminGroup
+#User
+$user
+
+#User ID
+$userID 
+#User Name
+$userName
+
+#Report Date
+$reportDate
+
+#Weekly report
+#Excel Document
+$excelOne = New-Object -ComObject Excel.Application
+#Excel File
+$weeklyReport = $excelOne.Workbooks.Open("C:\Users\UserID\Documents\AdminRightsReports\Weekly Admin Rights Report 2023.xlsx")
+#Reports Sheet
+$wklyAdminReport = $weeklyReport.Sheets.Item("Template")
+
+
+
+
+#Local admins report
+$excelTwo = New-Object -ComObject Excel.Application
+#All Admin Report
+$AuthorizedAdminReport = $excelTwo.Workbooks.Open("C:\Users\UserID\Documents\AdminRightsReports\072023_q_Report_All_Local_Admins Step 3 Display Data Short.xls")
+#Report Sheet
+$allAdmReport = $AuthorizedAdminReport.Sheets.Item(1)
+
+#Exceptions report document
+#Word Object
+$wordDoc = New-Object -ComObject Word.Application
+#Word file
+$exceptionsReport = $wordDoc.Documents.Open("C:\Users\UserID\Documents\AdminRightsReports\072023_Exceptions Report.rtf")
+#Paragraph counter (must match 1st paragraph with data)
+$count = 3
+
+
+
+
+
+
+
+###############################################################################################
+#		DEFINE FUNCTIONS HERE                                                                 #
+###############################################################################################
+
+#Apperance 
+function banner{Write-Host $wMessage -ForegroundColor DarkGreen -BackgroundColor Black}
+
+#Credits
+function credits{Write-Host $iMessage| Pause }
+
+
+                            ##############################
+                            #  PART 1: Excel Form        #
+                            ##############################
+
+                #Open Excel Form and create a new tab with thw right format
+
+
+#Show Excel Report Sheet
+function show-Excel{
+    
+    $excelOne.Visible = $true
+    $excelOne.WindowState = 'xlMaximized'
+
+}
+
+#Create a new Tab for this week
+function add-Sheet{
+    
+    Pause
+    #Copy template cells
+    $wklyAdminReport.Range("A1:H189").Copy() | Out-Null
+    #add a new sheet
+    $weeklyReport.Worksheets.Add() | Out-Null
+    #New Sheet 
+    $script:newSheet = $weeklyReport.Sheets.Item('Sheet1') 
+    #Rename sheet
+    $newSheet.Name = "$reportDate" 
+    #Set active sheet
+    $newSheet.Activate() 
+    #Paste template column width
+    $newSheet.Range("A1:H189").PasteSpecial(8) | Out-Null
+    #Paste template content
+    $newSheet.Range("A1:H189").PasteSpecial(-4104) | Out-Null
+
+}
+
+                            ##############################
+                            #  PART 2: Word Program      #
+                            ##############################
+
+             # Open Word Document and copy PC names that need to be checked
+
+#Make Word document visible to user
+function show-Word{
+
+    $wordDoc.Visible = $true
+
+}
+
+#Select PCs that need to be checked for Admin rights
+function select-Computers{
+
+
+    #Total number of Paragraphs
+    $script:paragraphsCount = $exceptionsReport.Paragraphs.Count
+    
+    #Loop through the list to search for key word "added"
+    for($i = 3; $i -le $script:paragraphsCount-1;$i++ ){
+    #Select 3rd paragraph of Word Document because that is where relevant data starts
+    $script:currentParagraph = $exceptionsReport.Paragraphs[$count].Range.Text
+    #Loop through the paragraphs. Start with 3 (1 and 2 are headers) and end count -1 (Date)
+        
+        #Look if the paragraph includes keyword 'ADDED'
+        if($script:currentParagraph.ToString() -match "ADDED"){
+        
+            #Reference point for computer name. Must subtract 6 from N location
+            $end = $currentParagraph.IndexOf('N')
+            #PC name (starts at 6 for PFSHQ, and ends 6 spaces from N)
+            $PC = $currentParagraph.Substring(6,($end-6))
+            #Define what the computer name is within the string
+            Set-Variable -Name computerName -Value $PC.Trim() -Scope script
+            echo "`nNow checking PC $ComputerName..."
+            #Get user ID
+            getUserID
+            echo "Now checking User ID $userID..."
+            #add rows
+            add-Rows
+            #add values
+            add-Values
+            #Connect to the PC and get Admins
+            connectToPC
+            echo "Now connecting to PC $ComputerName..."
+            #Add rows to maintain format
+            #add-Rows
+            #Call Search Computers to check within the same loop
+            #search-ComputerName
+            #Add values that have keyword
+            #add-Values
+        }
+
+        #Increase the count
+        $script:count++
+    
+    }
+    
+    
+    
+}
+
+#Add additional rows to Weekly Admin Rights Report 
+function add-Rows{
+    
+    #adds a rows to row and shifts down
+    $newSheet.Range("D4").EntireRow.Insert(1) | Out-Null
+}
+
+#Add value to the new sheet location
+function add-Values{
+    
+    #Add Domain
+    $newSheet.Columns.Item(1).Rows.Item(4) = 'PFSHQ'
+    #Add Machine name
+    $newSheet.Columns.Item(4).Rows.Item(4) = $computerName
+    #Add User Name
+    $newSheet.Columns.Item(3).Rows.Item(4) = $userName
+    #Clear variable to allow a new value
+    Clear-Variable -Name userName -Scope script
+    #Add Tech name
+    $newSheet.Columns.Item(6).Rows.Item(4) = $techName
+    #Add updated Date
+    $newSheet.Columns.Item(7).Rows.Item(4) = $(Get-Date -Format MM/dd/yyyy)
+
+}
+
+
+
+
+                            ########################################
+                            #  PART 3: Excel All Admin Report      #
+                            ########################################
+
+                              #Open All Admin report to compare IDs
+
+#Make Word document visible to user
+function show-ExcelTwo{
+
+    $excelTwo.Visible = $true
+    $excelTwo.WindowState = 'xlMaximized'
+
+}
+
+#Search Computer name on the All Admin Report
+function search-ComputerName{
+
+    #If no '-' then skip name portion (exeption PC)
+    If($computerName.Contains('-')){
+       
+        #Remove dash to get RACFID
+        $computerDash = $computerName.IndexOf('-')
+        #RACFID after removing -
+        Set-Variable -Name userID -Value ($computerName.Substring(1,($computerDash-2))) -Scope script
+        #Additional line for laptop users
+            If($userID.EndsWith('lt')){
+                #Change userId again by removing lt from ID
+                Set-Variable -Name userID -Value ($computerName.Substring(1,($computerDash-3))) -Scope script
+            }
+
+        #Try to get username from AD, catch the exeption where username does not exist
+        try{
+        #Define user
+        Set-Variable -Name user -Value ([ADSI]"WinNT://$domainName/$userID,user") -Scope script
+        #Define user name
+        Set-Variable -Name userName -Value ($user.FullName.ToString()) -Scope script
+        }catch{
+            #handle the exeption
+            Write-Host "`nUser ID is not in AD" -ForegroundColor Red  
+        }
+        
+    }else{
+        #Write-Output "`nExeption: Computer Name does not match naming standards"
+        Set-Variable -Name userID -Value $computerName -Scope script
+        Set-Variable -Name userName -Value $computerName -Scope script
+        }
+    #Once ID is found, search for it on the list
+    $found = $newSheet.Columns.Item(2).Cells.find($userID)
+    If($found -eq $null){
+                #serial not found
+                Echo "`nUserID $userID not listed"
+                Echo "username is $userName"
+			}else{
+				#serial found
+                Echo "`nUserID $uSerID is listed"
+			}
+
+}
+
+#Get UserID from computer name, and AD user info if available
+function getUserID{
+
+    #If no '-' then skip name portion (exeption PC)
+    If($computerName.Contains('-')){
+       
+        #Remove dash to get RACFID
+        $computerDash = $computerName.IndexOf('-')
+        #RACFID after removing -
+        Set-Variable -Name userID -Value ($computerName.Substring(0,($computerDash))) -Scope script
+        #Additional line for laptop users
+            If($userID.EndsWith('lt')){
+                #Change userId again by removing lt from ID
+                Set-Variable -Name userID -Value ($computerName.Substring(0,($computerDash-2))) -Scope script
+            }
+
+        #Try to get username from AD, catch the exeption where username does not exist
+        try{
+        #Define user
+        Set-Variable -Name user -Value ([ADSI]"WinNT://$domainName/$userID,user") -Scope script
+        #Define user name
+        Set-Variable -Name userName -Value ($user.FullName.ToString()) -Scope script
+        }catch{
+            #handle the exeption
+            Write-Host "`nUser ID is not in AD" -ForegroundColor Red  
+        }
+        
+    }else{
+        #Write-Output "`nExeption: Computer Name does not match naming standards"
+        Set-Variable -Name userID -Value $computerName -Scope script
+        Set-Variable -Name userName -Value $computerName -Scope script
+        }
+}
+
+#Search user ID in All Admins List 
+function searchID{
+    
+    #Once ID is found, search for it on the list
+    $found = $newSheet.Columns.Item(2).Cells.find($userID)
+    If($found -eq $null){
+                #serial not found
+                Echo "`nUserID $userID not listed"
+                Echo "username is $userName"
+                #Actually remove user
+                $adminGroup.Remove($user.Path)
+                #Make a note on the Excel sheet
+                $newSheet.Columns.Item(5).Rows.Item(4) = "$userID removed"
+			}else{
+				#serial found
+                Echo "`nUserID $uSerID is listed"
+                #Make a note to the Excel sheet
+                $newSheet.Columns.Item(5).Rows.Item(4) = "$admin is listed"
+			}
+
+}
+
+
+                            ########################################
+                            #  PART 4: Remote in to Computer       #
+                            ########################################
+
+#Connect to remote computer
+function connectToPC{
+
+
+    #Check if computer is online
+    if(Test-Connection -ComputerName $computerName -Quiet){
+  
+        #Set AdminGroup
+        Set-Variable -Name adminGroup -Value ([ADSI]"WinNT://$computerName/Administrators,group") -Scope script
+        #Get Admin group members as objects
+        $members = @($adminGroup.psbase.Invoke("Members"))
+        #Convert Objects into Strings to read info, then compare them to the basic admins on every PC
+        $members | foreach {
+                                #List all admins in the machine
+                                $admin = $_.GetType().invokeMember("Name",'GetProperty',$null,$_,$null)
+                                #Filter out admins that are usually present in every machine
+                                If($admin -in $regularAdmins){
+                                    echo "$admin"
+                                #Check if user ID is listed in the admins
+                                }else{
+                                        If($admin -like $userID){
+                                            #Remove userID
+                                            searchID
+                                        }else{
+                                                #Need to figure out how to write more than one, in case there are multiple admins not listed
+                                                $newSheet.Columns.Item(8).Rows.Item(4) = "$admin present but not listed, needs further investigation"
+                                        }
+                                    
+                                    }
+                                
+                                
+                                }
+                            
+    }else{
+    
+        #Connection failed. Write it in the comments section
+        $newSheet.Columns.Item(8).Rows.Item(4) = "Unable to connect to PC"
+    
+    }
+    
+}
+
+
+
+
+
+
+#close all backgroud applications
+function close-programs{
+
+    $excelOne.Quit()
+    $excelTwo.Quit()
+    $wordDoc.Quit()
+    $excelOne = $weeklyReport = $wklyAdminReport = $null
+    $excelTwo = $AuthorizedAdminReport = $allAdmReport = $null
+    $wordDoc = $exceptionsReport = $null
+    [GC]::Collect()
+
+}
+
+
+
+###############################################################################################
+#		BEGINING OF MAIN                                                                      #
+###############################################################################################
+banner
+credits
+show-Excel
+#Get report date
+Do{
+        $reportDate = Read-Host -Prompt "Please enter report Date"
+        "`n$reportDate"
+        $respose = Read-Host -Prompt "`nIs this date correct?(y/n)"
+
+            if($response -eq 'n'){
+            
+                Set-Variable -Name reportDate -Value (Read-Host -Prompt "Please enter report Date")
+            }
+
+    }until($respose -eq 'y')
+#Get Tech name
+Do{
+
+    $techName = Read-Host -Prompt "Technician Name"
+    "`n$techName"
+    $answer = Read-Host -Prompt "`nIs this correct?(y/n)"
+    
+        if($answer -eq 'n'){
+            
+                Set-Variable -Name techName -Value (Read-Host -Prompt "Please enter technician name")
+            }
+
+}until($answer -eq 'y')
+
+add-Sheet
+select-Computers
+
+
+# End of script
