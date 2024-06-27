@@ -1,0 +1,538 @@
+#!/bin/bash
+#
+# SCRIPT: LaptopBuilder
+# AUTHOR: Luis Barbosa
+# DATE: 07/17/2023
+# REV: 1.1.A (Valid are A, B, D, T, and P)
+#			 (For Alpha, Beta, Dev, Test, and Production)
+#
+# PLATFORM: Windows
+#
+# PURPOSE: Automate the process of finishing a laptop build after it has been updates and added to the domain. 
+#          This program should copy the folder with all applications that need to be installed and run them one by one.
+#          Later, may try to add the process of naming PC and addind to the Domain. 
+# 
+# REV LIST:
+#		DATE: DATE_of_REVISION
+#		BY: AUTHOR_of_MODIFICATION
+#		MODIFICATION: Describe what was modified, new feautures, etc--
+#
+#
+# set -n  #Uncomment to check script syntax, without execution.
+#		  #NOTE: Do not forget to put the comment back in or
+# 		  #			the shell script will not execute!
+# set -x  #Uncomment to debug this shell script
+#
+###############################################################################################
+#		DEFINE FILES AND VARIABLES HERE
+###############################################################################################
+
+#Welcome message
+$wMessage = "
+              _                      
+__      _____| | __  ___  _   _  ___ 
+\ \ /\ / / _ | |/ _||   || \_/ |/ _ |
+ \ V  V |  __| | |_ | | || |-| |  __|
+  \_/\_/ \___|_|\__||___||_| |_|\___|"
+
+#Introduction message  
+$iMessage = 
+"
+Code by LUIS BARBOSA
+"
+
+#Laptop Name
+$laptopID
+#laptop Admins
+$adminGroup
+#members
+$members
+#Array of members
+$admins
+#GD_PCServices
+$gd_PCServices = ([ADSI]"WinNT://pfshq/GD_PCServices,group")
+#Laptop AD object
+$laptopADObject
+#Distinguished Name
+$distinguishedName
+#Laptop AD Container
+$targetPath = "OU=WIN10,OU=LAPTOP,OU=CORP,OU=US,OU=COMPUTERS,OU=PRI,OU=NA,DC=pfshq,DC=com"
+#final distinguished name
+$newIdentity = "CN=$laptopID,OU=WIN10,OU=LAPTOP,OU=CORP,OU=US,OU=COMPUTERS,OU=PRI,OU=NA,DC=pfshq,DC=com"
+
+#Messages
+#Sucess
+$sucessMessage = "`nSucess!...`n"
+$failMessage = "`nSomething went wrong...`n"
+
+
+###############################################################################################
+#		DEFINE FUNCTIONS HERE
+###############################################################################################
+
+function banner{Write-Host $wMessage -ForegroundColor DarkGreen -BackgroundColor Black}
+
+#Credits
+function credits{Write-Host $iMessage| Pause }
+
+
+########################################
+#		    Initial Setup              #
+########################################
+
+#Set AD description
+function setADDescription{
+
+    #verify information
+    Do{
+    
+        #Get description information from user
+        $description = Read-Host -Prompt "Enter AD description (User Name, laptop model, tech initials, etc)"
+        
+        "`n$description`n"
+
+        $response = Read-Host -Prompt "Is this correct? (y/n)"
+
+            if($response -eq 'n'){
+            
+                Clear-Variable -Name description
+                Set-Variable -Name description -Value (Read-Host -Prompt "Enter AD description (User Name, laptop model, tech initials, etc)")
+
+            }#end if statement
+    
+    }until($response -eq 'y')
+
+    #enter description to AD 
+    Set-ADObject -Identity $laptopADObject -Description $description
+
+}#end function
+
+#Move laptop ID to correct AD bucket
+function moveToBucket{
+
+    #message to let user know current step
+    Write-Host "`nStep 0: Now moving laptop to correct AD container$`n" -ForegroundColor Yellow
+
+    #Get laptop Object 
+    Set-Variable -Name laptopADObject -Value (Get-ADComputer -Identity $laptopID) -Scope script
+
+    #Set AD description before moving object
+    setADDescription
+
+    #Get Laptop Distinguised Name
+    Set-Variable -Name distinguishedName -Value ($laptopADObject.DistinguishedName) -Scope script
+
+    #Move Laptop to right Organization Unit (OU) container
+    Move-ADObject -Identity $distinguishedName -TargetPath $targetPath
+
+    #message to let user know current step
+    Write-Host "`nNow making sure changes were successful$`n" -ForegroundColor Yellow
+
+    #Direct to next step
+    checkADBucket
+
+}#end function
+
+#Check if laptop AD move was successful
+function checkADBucket{
+
+    #message to let user know current step
+    Write-Host "`nChecking...`n" -ForegroundColor Yellow
+
+
+    #clear old variable
+    Clear-Variable -Name distinguishedName -Scope script
+
+    #set new value
+    Set-Variable -Name distinguisedName -Value (Get-ADObject -Identity $newIdentity) -Scope script
+
+    #compare
+    if($distinguishedName -eq $newIdentity){
+    
+        #Message
+        Write-Host $sucessMessage -ForegroundColor Green
+
+    }else{
+    
+        Write-Host $failMessage -ForegroundColor Red
+    
+    }
+
+
+}#end function
+
+#Step 1: check connection to the laptop/PC
+function testConnection{
+
+    
+    Write-Host "`nStep 1: Testing connection to computer...`n" -ForegroundColor Yellow
+
+    #Check if computer is online
+    if(Test-Connection -ComputerName $laptopID -Quiet){
+
+        #OK message
+        Write-Host $sucessMessage -ForegroundColor Green
+        
+     }#end if
+    
+
+
+}#end function
+
+#Step 2: Check if PCServices is in the Admin group
+function check4PCServices{
+
+    #message to let user know current step
+    Write-Host "`nStep 2: Now checking for GD_PCServices in the local administrators group`n" -ForegroundColor Yellow
+
+    #Set AdminGroup
+    Set-Variable -Name adminGroup -Value ([ADSI]"WinNT://$laptopID/Administrators,group") -Scope script
+                   
+    #Get Admin group members as objects
+    Set-Variable -Name members -Value (@($adminGroup.psbase.Invoke("Members"))) -Scope script
+
+    #local Admins
+    Set-Variable -Name admins -Value ([System.Collections.ArrayList]::new()) -Scope script
+    
+    #loop through current admins to check if PCServices is included
+    $script:members | foreach {
+                            #List all admins in the machine
+                            $script:admin = $_.GetType().invokeMember("Name",'GetProperty',$null,$_,$null)
+
+                            #Add admins to an ArrayList to check if PCServices is included
+                            [void]$script:admins.Add($admin)
+                                
+                        }#End foreach
+
+                        
+                            #Filter out admins that are usually present in every machine
+                            If("GD_PCServices" -in $admins){
+
+                                    Write-Host "`nPCServices is listed as local Machine Administrator`n" -ForegroundColor Green
+
+                                
+                            }else{
+                                  
+                                    #PCServices is not listed and should be added for the remainder of commands to work
+
+                                    #message
+                                    Write-Host "`nPCServices is not listed as a local admin.`n" -ForegroundColor Red
+
+                                    #Add PCServices as a local admin
+                                    addPCServices      
+                                    
+
+                            }#End if/else statement
+
+}#end function
+
+#Add PCServices as an Admin. Worked when run on Admin Powershell but not on regular Powershell. Tested on my PC, typed computer name directly.
+function addPCServices{
+
+    #message
+    Write-Host "`nNow Adding GD_PCServices group as a Local administrator`n" -ForegroundColor Yellow
+
+    #Add Gd_PCServices to the admin list 
+    $adminGroup.Add($gd_PCServices.Path)
+
+    #update message
+    Write-Host "`nNow making sure PCServices was added to the admins group...`n" -ForegroundColor Yellow
+    
+    #Make sure PCServices was added by checking the list once more
+    check4PCServices
+
+}#end function
+
+
+########################################
+#		  Basic Installation           #
+########################################
+
+#Step 3: copy build files
+function copyInitialFiles{
+
+     Write-Host "`nStep 3: Copy Build files`n" -ForegroundColor Yellow
+
+    #copy default build files from my computer
+    Write-Host "`nChecking if Laptop can be reached`n" -ForegroundColor Yellow
+    $path = "\\$laptopID\c$"
+
+    #Test if laptop is online
+    if (Test-Path -Path $path) {
+        Write-Host "`nConnection test successful`n" -ForegroundColor Green
+        Write-Host "`nCopying initial files`n" -ForegroundColor Yellow
+
+        #Makes each passthrough an object
+        Copy-Item -Path \\D0591-10\c$\PCServices\Builds  -Recurse -Destination \\$laptopID\C$\PCServices\Builds -PassThru
+        #Success message
+            if($? -eq $true ){
+                Write-Host "`nFile transfer was successful`n" -ForegroundColor Green
+                Write-Host "`nDisplaying copied files`n" -ForegroundColor Yellow
+                Get-ChildItem -Path \\$laptopID\C$\PCServices
+
+            }else{Write-Host "`nFiles transfer unsuccessful`n" -ForegroundColor Red}#end ifelse statement
+
+    }#end if statement
+
+}#end function
+
+
+#Step 4A: Run network settings
+function fixNetworkSettings{
+
+    #message
+    Write-Host "`nStep 4: Now fixing proxy setting...`n" -ForegroundColor Yellow
+
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {start-Process -FilePath "powershell" -ArgumentList {reg import C:\PCServices\Builds\NetworkSettings.reg}}
+
+    #clear to move to next step
+    startIE
+
+}
+
+#Step 4B: start ie to enable network settings
+function startIE{
+
+    #message
+    Write-Host "`nNow testing proxy...`n" -ForegroundColor Yellow
+
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {start-process msedge.exe -Credential pfshq\D0591}
+    
+    #message
+    Write-Host "`nTesting proxy commands completed...`n" -ForegroundColor Yellow
+
+}
+
+#Step 5: Install Avaya 1x
+function installAvaya{
+
+    Write-Host "`nStep 5: Now installing Avaya...`n" -ForegroundColor Yellow
+    
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {Start-Process -FilePath "C:\PCServices\Builds\1x V6 - Current\Avaya1XSuite.exe" -PassThru -Wait -ArgumentList "/silent"}
+
+    
+    #OK message
+    Write-Host $sucessMessage -ForegroundColor Green
+
+}
+
+#Step 6: Install Carbon Black
+function installCarbonBlack{
+
+    Write-Host "`nStep 6: Now installing Carbon Black...`n" -ForegroundColor Yellow
+
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {msiexec /q /i "%~dp0CB_Defense_installer_vista_win7_win8-64-3.5.0.1680.msi" COMPANY_CODE=5QZ9J1CWW5IJ0MN15HW /L*vx "C:\CB_Defender_SCCM.log" PROXY_SERVER=proxy.pfsfhq.com:3128}
+
+    #OK message
+    Write-Host $sucessMessage -ForegroundColor Green
+
+}
+
+#Step 7: Install IBM
+function installIBMBigFix{
+
+    Write-Host "`nStep 7: Now installing IBM Big Fix...`n" -ForegroundColor Yellow
+
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {Start-Process -FilePath "C:\PCServices\Builds\IBM BigFix\Client\BigFix-BES-Client-9.5.13.130.exe" -PassThru -Wait -ArgumentList "/silent"}
+
+    #OK message
+    Write-Host $sucessMessage -ForegroundColor Green
+
+}
+
+#Step 8: Install Ivanti
+function installIvanti{
+
+    Write-Host "`nStep 8: Now installing Ivanti...`n" -ForegroundColor Yellow
+
+    
+
+}
+
+#Step 9: Install Pulse Secure
+function installPulseSecure{
+
+    Write-Host "`nStep 9: Now installing Pulse Secure...`n" -ForegroundColor Yellow
+
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {msiexec /q /u /i "%~dp0ps-pulse-win-22.3r2.0b19787-64bit-installer.msi" }
+
+    #OK message
+    Write-Host $sucessMessage -ForegroundColor Green
+
+}
+
+#Step 10: Install Dock Drivers
+function installDockDrivers{
+
+    Write-Host "`nStep 10: Now installing Dock Drivers...`n" -ForegroundColor Yellow
+
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {Start-Process -FilePath "C:\PCServices\Builds\ThinkPad usb-c dock gen2 drivers\thinkpad_usb-c_dock_gen2_drivers_v1.0.3.03241.exe" -PassThru -Wait -ArgumentList "/silent"}
+
+    #OK message
+    Write-Host $sucessMessage -ForegroundColor Green
+}
+
+#Step 11: Install Zscaler
+function installZscaler{
+
+    Write-Host "`nStep 11: Now installing Zscaler...`n" -ForegroundColor Yellow
+    
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {Start-Process -FilePath "C:\PCServices\Builds\Zscaler\Zscaler_Deploy_V37218.bat" -PassThru -Wait -ArgumentList "/silent"}
+
+    #OK message
+    Write-Host $sucessMessage -ForegroundColor Green
+}
+
+#Step 12: Map drives batch file
+function installMapDrivesBatch{
+
+    Write-Host "`nStep 12: Now installing MapDrivesBatch...`n" -ForegroundColor Yellow
+
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {Copy-Item -Path "C:\PCServices\Builds\Map Drives T_U_X.bat" -Destination "C:\Users\Public\Desktop"}
+
+    #OK message
+    Write-Host $sucessMessage -ForegroundColor Green
+}
+
+#Step 14: Update Group Policy
+function gpUpdate{
+
+     Write-Host "`nStep 14: Now sending GPUpdate command...`n" -ForegroundColor Yellow
+
+     Invoke-Command -ComputerName $laptopID -ScriptBlock {Start-Process -FilePath "cmd" -ArgumentList "gpupdate/sync"}
+
+     #OK message
+     Write-Host $sucessMessage -ForegroundColor Green
+}
+
+#Step 15: DisablePS-Remoting
+function disablePSRemote{
+
+    Write-Host "`nStep 15: Now disabling remote access...`n" -ForegroundColor Yellow
+
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {Start-Process -Filepath "powershell" -ArgumentList {Disable-PSRemoting}}
+
+    #OK message
+    Write-Host $sucessMessage -ForegroundColor Green
+
+}
+
+#Step 16: Stop WinRM Service
+function stopWinRM{
+
+    Write-Host "`nStep 12: Now stopping WinRM Service...`n" -ForegroundColor Yellow
+
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {Start-Process -FilePath "powershell" -ArgumentList {Stop-Service -Name "WinRM"}}
+
+    #OK message
+    Write-Host $sucessMessage -ForegroundColor Green
+
+}
+
+#Step 17: Restart PC
+function restartLaptop{
+
+    Write-Host "`nStep 17: Now restarting Laptop...`n" -ForegroundColor Yellow
+
+    Invoke-Command -ComputerName $laptopID -ScriptBlock {Start-Process -FilePath "cmd" -ArgumentList "shutdown -r -t 0000"}
+
+    #OK message
+    Write-Host $sucessMessage -ForegroundColor Green
+
+}
+
+
+#####################################
+#		Personalization Settings    #
+#####################################
+
+#Step 13: Change Desktop background
+function changeBackground {
+
+     Write-Host "`nStep 13: Attempting to change background`n" -ForegroundColor Yellow
+
+     Invoke-Command -ComputerName $laptopID -ScriptBlock {reg import C:\PCServices\Builds\DesktopBackground.reg}
+
+     #OK message
+     Write-Host $sucessMessage -ForegroundColor Green
+}
+
+
+#####################################
+#		    Automation              #
+#####################################
+
+#Create an automation function. Must be able to continue process if error occurs. Add error message to allow user to go back
+#and fix issue.
+function automation{
+
+    Write-Host "`nInitiating process...`n" -ForegroundColor Yellow
+    #Step 0: Move Laptop to the right AD Container
+    try{moveToBucket}catch{"An error has occurred while moving containers"}
+    #Step 1: Stablish Connection. If this steps fails no need to continue
+    try{testConnection}catch{
+        "An error has occurred while testing the connection."
+        break
+        }
+    #Step 2: Check/Add PCServices to local Admin group. If this fails no need to continue.
+    try{check4PCServices}catch{
+         "An error has occurred while checking for PCServices in admin group"
+         break}
+    #Step 3: Copy Build Files. If this fails no need to continue.
+    try{copyInitialFiles}catch{
+        "An error ocurred while copying initial files"
+         break    }
+    #Step 4: Fix Proxy Settings
+    try{fixNetworkSettings}catch{"An error ocurred while fixing proxy settings"}
+    #Step 5: Install Avaya
+    try{installAvaya}catch{"An error has occurred while installing Avaya"}
+    #Step 6: Install Carbon Black
+    try{installCarbonBlack}catch{"An error has occurred while installing Carbon Black"}
+    #Step 7: Install IBM BigFix
+    try{installIBMBigFix}catch{"An error has occurred while installing IMB Big Fix"}
+    #Step 8: Install Ivanti
+    try{installIvanti}catch{"An error has occurred while installing Ivanti"}
+    #Step 9: Install Pulse Secure
+    try{installPulseSecure}catch{"An error has occurred while installing Pulse Secure"}
+    #Step 10: Install Dock Drivers
+    try{installDockDrivers}catch{"An error has occurred while installing Dock Drivers"}
+    #Step 11: Install Zscaler
+    try{installZscaler}catch{"An error has occurred while installing Zscaler"}
+    #Step 12: Install MapDrives
+    try{installMapDrivesBatch}catch{"An error has ocurred while installing Map Drivers Batch"}
+    #Step 13: Change Background
+    try{changeBackground}catch{"An error has ocurred while changing the background"}
+    #Step 14: GPUpdate
+    try{gpUpdate}catch{"An error has occurred while doing a GPUpdate"}
+    #step 15: Disable PSRemoting
+    try{disablePSRemoting}catch{"An error has occurred while disabling PSRemoting"}
+    #Step 16: Stop WinRM Service
+    try{stopWinRM}catch{"An error has occurred while stopping WinRM"}
+    #Step 17: Restart Laptop
+    try{restartLaptop}catch{"An error has occurred while attempting to restart the laptop"}
+
+
+
+}
+
+###############################################################################################
+#		BEGINING OF MAIN
+###############################################################################################
+banner
+credits
+Do{
+        $laptopID = Read-Host -Prompt "Please enter laptop ID"
+        "`n$laptopID"
+        $respose = Read-Host -Prompt "`nIs this ID correct?(y/n)"
+
+            if($response -eq 'n'){
+            
+                Set-Variable -Name laptopID -Value (Read-Host -Prompt "Please enter correct laptop ID") -Scope script
+            }
+
+    }until($respose -eq 'y')
+
+automation
+
+
+# End of script
