@@ -1,0 +1,159 @@
+#!/bin/bash
+#
+# SCRIPT: Threatminator
+# AUTHOR: Luis Barbosa
+# DATE: 07/10/2023
+# REV: 1.3.0 (Valid are A, B, D, T, and P)
+#			 (For Alpha, Beta, Dev, Test, and Production)
+#
+# PLATFORM: Windows
+#
+# PURPOSE: This program will delete a folder or file within the AppData folder of a remote computer. The list will be taken from a security report and 
+#          and broken down to a separate Excel file with two columns, one for the PC name and one for the file path. 
+# 
+# REV LIST:
+#		DATE: DATE_of_REVISION
+#		BY: AUTHOR_of_MODIFICATION
+#		MODIFICATION: Describe what was modified, new feautures, etc--
+#
+#
+# set -n  #Uncomment to check script syntax, without execution.
+#		  #NOTE: Do not forget to put the comment back in or
+# 		  #			the shell script will not execute!
+# set -x  #Uncomment to debug this shell script
+#
+###############################################################################################
+#		DEFINE FILES AND VARIABLES HERE
+###############################################################################################
+
+#Welcome message
+$wMessage = "
+              _                      
+__      _____| | __  ___  _   _  ___ 
+\ \ /\ / / _ | |/ _||   || \_/ |/ _ |
+ \ V  V |  __| | |_ | | || |-| |  __|
+  \_/\_/ \___|_|\__||___||_| |_|\___|"
+
+#Introduction message  
+$iMessage = 
+"
+Code by LUIS BARBOSA
+"
+
+#excel Document
+$excelDoc = New-Object -ComObject Excel.Application
+#excel Workbook
+$incidentList
+#excel Sheet
+$list 
+
+#computer
+$computerName 
+
+#file path
+$filePath 
+
+#user profile
+$userProfile 
+
+#AppData Folder
+$appDataFolder 
+
+#application folder
+$appFolder 
+
+
+
+###############################################################################################
+#		DEFINE FUNCTIONS HERE
+###############################################################################################
+
+#Apperance 
+function banner{Write-Host $wMessage -ForegroundColor DarkGreen -BackgroundColor Black}
+
+#Credits
+function credits{Write-Host $iMessage| Pause }
+
+#request computer list file location 
+function getFile{
+
+    #get file location
+    Set-Variable -Name filePath -Value (Read-Host -Prompt "Enter list file location") -Scope script
+    #open file
+    Set-Variable -Name incidentList -Value ($excelDoc.Workbooks.Open($filePath)) -Scope script
+    #Open Sheet 
+    Set-Variable -Name list -Value $incidentList.Sheets.Item(1) -Scope script
+    
+
+}
+
+function showDoc{
+
+    $excelDoc.Visible = $true
+    $excelDoc.WindowState = 'xlMaximized'
+
+}
+
+
+#get total number of lines on file
+function deleteThreats{
+
+    #Get the total number of rows user
+    $rowCount = $list.UsedRange.Rows.Count
+   
+    #loop through the list of items
+    for( $i = 1;$i -le $rowCount;$i++){
+    
+        #computer
+        $computerName = $list.Columns.Item(1).Rows.Item($i).Text 
+
+        #Column two sentence
+        $string = $list.Columns.Item(2).Rows.Item($i).Text
+
+        #User Profile
+        $userProfile = $string.Split('\')[2]
+        
+
+        #AppData Folder
+        $appDataFolder =$string.Split('\')[4]
+
+        #application folder
+        $appFolder = $string.Split('\')[5]
+
+        $path = "\\$computerName\C$\Users\$userProfile\AppData\$appDataFolder\$appFolder"
+
+        if(Test-Connection -ComputerName $computerName -Quiet){
+        
+            $action = Measure-Command {Remove-Item "$path" -Recurse} | select @{n="completion time ";e={" ",$_.Minutes,"minutes",$_.Seconds,"seconds",$_.Milliseconds,"miliseconds" -join " "}}
+							if($? -eq $true){
+								$date = get-Date
+								Out-File -FilePath 'C:\Users\D0591\Documents\Report.txt' -InputObject "$path $date $action" -Encoding ASCII -Append -NoClobber
+								echo "File/Folder  at $path has been deleted $action"
+							} else {
+								echo "Unable to locate file/folder at $path"
+								pause
+							}
+        
+        }else{
+            
+            echo "Was not able to reach PC. Please try again."
+
+        }
+    
+    }
+
+}
+
+
+
+###############################################################################################
+#		BEGINING OF MAIN
+###############################################################################################
+banner
+credits
+getFile
+showDoc
+deleteThreats
+
+
+# End of script
