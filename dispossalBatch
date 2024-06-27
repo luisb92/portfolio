@@ -1,0 +1,433 @@
+#!/bin/bash
+#
+# SCRIPT: FAS_DISPOSSAL_BATCH
+# AUTHOR: LUIS BARBOSA
+# DATE: 12/07/2023
+# REV: 1.1.A 
+#
+# PLATFORM: WINDOWS
+#
+# PURPOSE: Help identify if end-of-life (EOL) serial numbers are listed on the company FAS sheet
+#		   and list them accordig to the current EOL form. Now it works automatically when providing a list Word Doc. 
+#          Currently list must follow this pattern: line 1 title, space, Model, SN, space,... Any new additional page must start with blank space
+# 
+# REV LIST:
+#		DATE: 
+#		BY: 
+#		MODIFICATION: Modified to use once with MAC list but did not copy the model to the spreadsheet.
+#
+#
+# set -n  #Uncomment to check script syntax, without execution.
+#		  #NOTE: Do not forget to put the comment back in or
+# 		  #			the shell script will not execute!
+# set -x  #Uncomment to debug this shell script
+#
+###############################################################################################
+#		DEFINE FILES AND VARIABLES HERE                                                       #
+###############################################################################################
+
+#Welcome message
+$wMessage = "
+              _                      
+__      _____| | __  ___  _   _  ___ 
+\ \ /\ / / _ | |/ _||   || \_/ |/ _ |
+ \ V  V |  __| | |_ | | || |-| |  __|
+  \_/\_/ \___|_|\__||___||_| |_|\___|"
+
+#Introduction message  
+$iMessage = 
+"
+Code by LUIS BARBOSA
+"
+ 
+# Excel Documents Objects
+
+#FAS Excel Documents containing all serial numbers
+$fasExcel = New-Object -ComObject Excel.Application
+#FAS Excel current Form for disposal inventory
+$formExcel = New-Object -ComObject Excel.Application
+
+#Workbooks within the Excel Documents that will be used on this program 
+
+#FAS original list within FAS Excel
+$fasWbook = $fasExcel.Workbooks.Open("C:\Users\D0591\Documents\Equipment Disposal\Copy of Assets as of Dec with Serial #  Dec 12 2019.xls")
+#Current FAS disposal form
+$formWbook = $formExcel.Workbooks.open("C:\Users\D0591\Documents\Equipment Disposal\Asset Disposal Form 2023.xlsx")
+
+#Sheets within the Worbook that will be used for this program
+
+#FAS sheet page 1
+$fasSheet = $fasWbook.Sheets.Item(1) 
+#FAS sheet page 5
+$fasCopySheet = $fasWbook.Sheets.Item(5)
+
+#Pages within the Form that need to be used
+
+#FAS exists, currently page 2 of the Excel Doc (d for Disposal form)
+$dForm = $formWbook.Sheets.Item(2)
+#FAS not found, currently page 3 of Excel Doc (e for exception form)
+$eForm = $formWbook.Sheets.Item(3)
+
+#Pallet number
+$palletNum 
+
+#Object we are searching for, in this case the serial number
+$sNumber
+
+#Page where it was found first
+$pageName
+
+#If serial number found, retrive its information and store on this object
+$found 
+
+#If the serial number is not found
+#Asset Description
+$assetDesc
+#Model number
+$modelNum
+#Purchase year
+$purchYear
+
+#Rows in Form where to start writing content. Currently 9 each but start at 10 to keep format
+$pgOneRow = 10 
+$pgTwoRow = 10
+
+#Word documents
+$wordDoc
+#path to list file
+$pathToList
+#asset List 
+$assetList
+#AssetDesc designator
+$assetDesignation
+
+
+
+
+###############################################################################################
+#		DEFINE FUNCTIONS HERE                                                                 #
+###############################################################################################
+
+###############################################################
+#                                                             #
+#            BANNER AND APPEARANCE                            #
+#                                                             #
+###############################################################
+
+#Apperance 
+function banner{Write-Host $wMessage -ForegroundColor DarkGreen -BackgroundColor Black}#end function
+
+#Credits
+function credits{Write-Host $iMessage| Pause }#end function
+
+###############################################################
+#                                                             #
+#            CONTINIOUS LOOP                                  #
+#                                                             #
+###############################################################
+
+#Check serial if serial should be checked. Points to saveAndExit
+function checkSerial{
+
+    #Ask user 
+    Do{
+    
+        $response = Read-Host -Prompt "`nDo you want to start program? (y/n)"
+
+            if($response -eq 'y'){
+        
+                #enter-Serial
+                #narrow-Search
+                automate
+        
+            }elseif($response -eq 'n'){
+        
+                #saveAndExit
+                #exit program
+                BREAK
+        
+            }
+    
+    }until($response -eq 'n')
+
+}#end function
+
+#Exit loop. Points to checkSerial
+function saveAndExit{
+
+    #confirm exit
+    Do{
+    
+        Set-Variable -Name exit -Value (Read-Host -Prompt "`nDo you want to save file and exit? (y/n)") -Scope script
+
+            if($exit -eq 'n'){
+        
+                #if response is no then go back to search loop
+                checkSerial
+            }elseif($exit -eq 'y'){
+        
+                #if reposnse is yes then save and exit
+                #save-Doc
+                BREAK
+            }
+
+    
+    }until($exit -eq 'y')
+
+    
+
+
+}#end function
+
+#Create a Word object for the list of items
+function createWordObject{
+
+    #create Word COM object 
+    #Word Object
+    Set-Variable -Name wordDoc -Value (New-Object -ComObject Word.Application) -Scope script
+    #ask user for list path
+    Set-Variable -Name pathToList -Value (Read-Host -Prompt "Please inset path to the asset list (Word Document)") -Scope script
+    #Word file
+        if(Test-Path -Path $pathToList){
+
+            Set-Variable -Name assetList -Value ($wordDoc.Documents.Open($pathToList)) -Scope script
+
+            }else{
+
+                Write-Error -Message "File path not found" 
+
+            }
+    
+    
+
+}#end function
+
+###############################################################
+#                                                             #
+#            EXCEL PORTION                                    #
+#                                                             #
+###############################################################
+
+#Open Excel Application to show progress
+function show-Excel{
+    #open Excel Book as program runs
+    $formExcel.Visible = $true
+    $formExcel.WindowState = 'xlMaximized'
+
+}#end function
+
+#Enter Pallet Number. This will be the list title
+function pallet{
+    
+    Set-Variable -Name palletNum -Value ($assetList.Paragraphs[1].Range.Text.TrimEnd()) -Scope script
+    echo "`n"
+}#end function
+
+#Checks if the serial is listed in the Excel Sheet
+function check4Serial{
+    Set-Variable -Name found -Value ($fasSheet.Cells.Find($sNumber)) -Scope script
+}#end function
+
+#Find which page contains the serial (if any)
+function narrow-Search{
+
+		#Check if the serial is located in page 1
+		    check4Serial
+            #If serial is not found
+			If($found -eq $null){
+                serial-NotFound -ErrorAction 'silentlycontinue'
+			}else{
+				#serial found
+                Set-Variable -Name found -Value ($fasSheet.Cells.Find($sNumber)) -Scope script
+                displayInfo
+                save-Results
+			}#end if/else statement
+}#end function
+
+#If serial is not found, save to Exceptions form
+function serial-NotFound{
+
+    #Select sheet and make it visible
+    $eForm.Activate()
+
+    #add a new row to avoid overwriting contents
+    add-Rows2eForm
+
+    #item description 
+                switch ($assetDesignation)
+                {
+                    'M' {Set-Variable -Name assetDesc -Value 'Monitor' -Scope script}
+                    'D' {Set-Variable -Name assetDesc -Value 'Desktop' -Scope script}
+                    'P' {Set-Variable -Name assetDesc -Value 'Printer' -Scope script}
+                    'I' {Set-Variable -Name assetDesc -Value 'Imac' -Scope script}
+                    'MM' {Set-Variable -Name assetDesc -Value 'Misc' -Scope script}
+                 }
+
+    
+    #If serial is not listed in the FAS sheet
+    $assetDesc
+    Echo "serial number: $sNumber"
+    Write-Host "This serial is not listed`n" -ForegroundColor Red
+    #Asset Description if item was not found on list
+   
+    #Save information
+    #Save Description. Column 3
+    $eForm.Columns.Item(3).Rows.Item($pgTwoRow) = $assetDesc
+    #Save serial. Column 4
+    $eForm.Columns.Item(4).Rows.Item($pgTwoRow) = $sNumber
+    #Save Model Number
+    $eForm.Columns.Item(5).Rows.Item($pgTwoRow) = $modelNum
+    #Save pallet number. Column 7
+    $eForm.Columns.Item(7).Rows.Item($pgTwoRow) = $palletNum
+}#end function
+			
+#Search for serial number within each page.
+function displayInfo{
+    
+    #If serial is listed in the FAS sheet
+    $assetDesc
+    Echo "serial number: $sNumber"
+    Write-Host "Serial listed`n" -ForegroundColor Green
+
+    [pscustomobject]@{
+        Worksheet = $pageName
+		Column = $found.Column
+		Row = $found.Row
+		Text = $found.Text
+        FAS_Num = $fasSheet.Cells.Item($found.Row,1).Text
+        Description = $fasSheet.Cells.Item($found.Row, 4).Text
+        Date = $fasSheet.Cells.Item($found.Row,9).Text
+        }#end array
+
+}#end function
+
+#If found, save serial to dispossal form Excel Document
+function save-Results{
+
+    #Select sheet and make it visible to user
+    $dForm.Activate()
+
+    #add a new row to avoid overwriting content
+    add-Rows2dForm
+
+    #Save to dispossal form (dForm)
+    #Save FAS number. Column 3
+    $dForm.Columns.Item(3).Rows.Item($pgOneRow) = $fasSheet.Cells.Item($found.Row,1).Text
+    #Save Description. Column 4
+    $dForm.Columns.Item(4).Rows.Item($pgOneRow) = $fasSheet.Cells.Item($found.Row, 4).Text
+    #Save serial number. Column 5
+    $dForm.Columns.Item(5).Rows.Item($pgOneRow) = $found
+    #Save Model Number. Column 6
+
+    #Save purchase year. Column 7
+    $dForm.Columns.Item(7).Rows.Item($pgOneRow) = $fasSheet.Cells.Item($found.Row,9).Text
+    #Save pallet number. Colunm 8
+    $dForm.Columns.Item(8).Rows.Item($pgOneRow) = $palletNum
+}#end function
+
+#Save Excel document and Exit
+function save-Doc{
+
+    Write-Host "Saving progress..." -ForegroundColor Green
+    #$formWbook.Save()
+    $formWbook.SaveAs("Pallet# $palletNum")
+        If($? -eq $true){ 
+    
+            Write-Host "Save sucessful" -ForegroundColor Green
+
+            #End Objects and close program
+            Write-Host "closing program..." -ForegroundColor Cyan
+            $fasWbook.close($true)
+            $formWbook.close($true)
+            Clear-Variable -Name fasWbook
+            Clear-Variable -Name formWbook
+            Clear-Variable -Name wordDoc
+    
+        }else{
+        
+            Write-Warning "Error saving"
+            
+            }
+    
+
+}#end function
+
+#Add additional rows to dForm 
+function add-Rows2dForm{
+    
+    #adds a row to disposal form from row 29 and shifts down
+    $dForm.Range("C10").EntireRow.Insert(1) | Out-Null
+}#end function
+
+#Add additional rows to eForm
+function add-Rows2eForm{
+
+    #adds a row to exception form from row 23 and shifts down
+    $eForm.Range("C10").EntireRow.Insert(1) | Out-Null
+}#end function
+
+
+
+###############################################################
+#                                                             #
+#            AUTOMATION SECTION                               #
+#                                                             #
+###############################################################
+
+
+function automate{
+
+    #create Word document
+    createWordObject
+
+    #Show Excel and progress
+    show-Excel
+
+    #get Pallet Number 
+    pallet
+
+    #Total number of Paragraphs
+    $script:paragraphsCount = $assetList.Paragraphs.Count
+    
+    #Loop through the list. 
+    #i=3 because we start at 3. 1 and 2 are title and blank space
+    #current paragraph - 3 ceause the final line should be the PN for last asset. 
+    #i+=4 because it is current asset then SN and blank space
+    for($i = 3; $i -le $paragraphsCount-3;$i+=4 ){
+
+            #set current paragraph
+            $script:currentParagraph = $assetList.Paragraphs[$i].Range.Text
+      
+            #Asset designation. 1st line in the group of 3
+            Set-Variable -Name assetDesignation -Value $currentParagraph.TrimEnd() -Scope script
+
+            #Model number and serial number. 2nd line in the group.
+            Set-Variable -Name modelNum -Value ($assetList.Paragraphs[$i+2].Range.Text.TrimEnd()) -Scope script
+
+            #Serial number from list. 3rd line in the group
+            Set-Variable -Name sNumber -Value ($assetList.Paragraphs[$i+1].Range.Text.TrimEnd()) -Scope script
+
+            #Check the list
+            narrow-Search 
+                 
+     }#end for loop
+
+     #Save work 
+     save-Doc
+
+}#end function
+    
+    
+    
+
+
+###############################################################################################
+#		BEGINING OF MAIN                                                                      #
+###############################################################################################
+banner
+credits
+echo "`n"
+checkSerial
+
+
+# End of script
